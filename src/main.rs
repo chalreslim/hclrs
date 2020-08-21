@@ -34,10 +34,11 @@ fn press_enter() {
 }
 
 fn run_y86<W: Write>(mut running_program: RunningProgram, yo_path: &Path,
-           run_options: RunOptions, out: &mut W) -> Result<(), Error> {
+           run_options: RunOptions, out: &mut W, reg_vals : String) -> Result<(), Error> {
     let mut yo_reader = BufReader::new(File::open(yo_path)?);
     running_program.load_memory_y86(&mut yo_reader)?;
     running_program.set_options(run_options);
+    running_program.set_registers(reg_vals);
     running_program.run(out)?;
     print!("{}", running_program.dump_y86_str());
     Ok(())
@@ -58,14 +59,17 @@ fn main_real() -> Result<bool, Error> {
     let program_name = args[0].clone();
     let mut opts = Options::new();
     let mut run_options = RunOptions::default();
+    let mut regs_vals = String::from("");
     opts.optflag("c", "check", "check syntax only");
     opts.optflag("d", "debug", "output wire values after each cycle and other debug output");
     opts.optflag("q", "quiet", "only output state at the end");
     opts.optflag("t", "testing", "do not output custom register banks (for autograding)");
     opts.optflag("h", "help", "print this help menu");
     opts.optflag("i", "interactive", "prompt after each cycle");
+    opts.optflag("", "regs", "give a register a starting value, ie. --regs 0:0x123,1:0x321");
     opts.optflag("", "trace-assignments", "show assignments in the order they are simulated");
     opts.optflag("", "version", "print version number");
+
     let parsed_opts = match opts.parse(&args[1..]) {
         Ok(m) => m,
         Err(f) => {
@@ -94,7 +98,17 @@ fn main_real() -> Result<bool, Error> {
         run_options.set_prompt(Box::new(press_enter));
     }
     let check_only = parsed_opts.opt_present("c");
-    let free_args = parsed_opts.free;
+    //FIXME: made this mutable in order to comply with existing code
+    let mut free_args = parsed_opts.free;
+    
+    // FIXME: is this okay?
+    for i in 0..free_args.len(){
+        if free_args[i].contains(':') {
+            regs_vals = (free_args[i]).clone();
+            free_args.remove(i);
+            break;
+        }
+    }
     if free_args.len() < 1 {
         print_usage(&program_name, opts);
         return Ok(false);
@@ -147,7 +161,7 @@ fn main_real() -> Result<bool, Error> {
         };
     run_options.set_timeout(timeout);
     let yo_path = Path::new(yo_filename);
-    match run_y86(running_program, yo_path, run_options, &mut stdout()) {
+    match run_y86(running_program, yo_path, run_options, &mut stdout(), regs_vals) {
         Err(e) => {
             e.format_for_contents(&mut stderr(), &file_contents)?;
             return Ok(false);

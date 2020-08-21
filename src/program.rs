@@ -1163,6 +1163,19 @@ impl RunningProgram {
         self.options = options;
     }
 
+    fn set_register(&mut self, reg: usize, value: u64){ 
+        self.registers[reg] = value;
+    }
+    pub fn set_registers(&mut self, reg_vals : String){
+        for pair in reg_vals.split(","){
+            let allinfo:Vec<&str> = pair.split(":").collect();
+            let regnum = allinfo[0].parse::<usize>().unwrap();
+            let hexnum = allinfo[1].trim_start_matches("0x");
+            let regval = u64::from_str_radix(hexnum, 16).unwrap();
+            self.set_register(regnum, regval);
+        }
+    }
+
     pub fn run<W: Write>(&mut self, out: &mut W) -> Result<(), Error> {
         while !self.done() {
             if self.options.show_registers_and_memory {
