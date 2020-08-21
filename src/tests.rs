@@ -11,10 +11,10 @@ use std::env;
 use std::fs::{File, read_dir};
 use std::io::{sink, Read, BufReader};
 use std::path::Path;
-use std::sync::{Once, ONCE_INIT};
+use std::sync::Once;
 extern crate env_logger;
 
-static TEST_LOGGER_ONCE: Once = ONCE_INIT;
+static TEST_LOGGER_ONCE: Once = Once::new();
 
 type ParseErrorType<'input> = ParseError<usize, Tok<'input>, Error>;
 type ErrorRecoveryType<'input> = ErrorRecovery<usize, Tok<'input>, Error>;
@@ -334,7 +334,7 @@ fn simple_program() {
     let mut errors = Vec::new();
     let statements = parse_Statements_str(&mut errors,
         "const x = 42; wire y : 32; wire z : 32;
-         z = [x > 43: 0; x < 43: y << 3; x == 43: 0]; y = x * 2;").unwrap();
+         z = y << 3; y = x * 2;").unwrap();
     debug!("statements are {:?}", statements);
     let program = Program::new(statements, vec!()).unwrap();
     let mut running_program = RunningProgram::new(program, 0, 0);
@@ -346,6 +346,7 @@ fn simple_program() {
     expect_values.insert(String::from("z"), WireValue::from_decimal("672").as_width(WireWidth::from(32)));
     assert_eq!(running_program.values(), &expect_values);
 }
+
 
 #[test]
 fn program_registers() {
@@ -412,6 +413,32 @@ fn program_registers_bubble() {
     assert_eq!(running_program.values().get("x_a"), Some(&WireValue::from_decimal("3").as_width(WireWidth::from(32))));
 }
 
+#[test]
+fn program_registers_and_mux() {
+    init_logger();
+    let mut errors = Vec::new();
+    let statements = parse_Statements_str(&mut errors,
+        "register xY { a: 32 = 42; };
+         wire y : 32; wire z : 32;
+         z = [Y_a > 43: 0; Y_a < 43: y << 3; Y_a == 43: 0; 1: 0];
+         y = Y_a * 2;
+         x_a = Y_a;").unwrap();
+    let program = Program::new(statements, vec!()).unwrap();
+    assert!(program.defaulted_wires().contains("stall_Y"));
+    assert!(program.defaulted_wires().contains("bubble_Y"));
+    let mut running_program = RunningProgram::new(program, 0, 0);
+    let mut expect_values = WireValues::new();
+    expect_values.insert(String::from("Y_a"), WireValue::from_decimal("42").as_width(WireWidth::from(32)));
+    expect_values.insert(String::from("x_a"), WireValue::from_decimal("42").as_width(WireWidth::from(32)));
+    expect_values.insert(String::from("y"), WireValue::from_decimal("84").as_width(WireWidth::from(32)));
+    expect_values.insert(String::from("z"), WireValue::from_decimal("672").as_width(WireWidth::from(32)));
+    expect_values.insert(String::from("stall_Y"), WireValue::from_decimal("0").as_width(WireWidth::from(1)));
+    expect_values.insert(String::from("bubble_Y"), WireValue::from_decimal("0").as_width(WireWidth::from(1)));
+    running_program.step().unwrap();
+    assert_eq!(running_program.values(), &expect_values);
+    running_program.step().unwrap();
+    assert_eq!(running_program.values(), &expect_values);
+}
 
 #[test]
 fn memory_program() {
@@ -1812,4 +1839,19 @@ fn usage_and_assignment_of_undeclared_gives_both_errors() {
     assert!(message.contains("assigned value"));
     assert!(message.contains("in expression"));
     assert!(!message.contains("fixed"));  // message should not mention fixed functionality
+}
+
+#[test]
+#[cfg(feature="disallow-unreachable-options")]
+fn disallow_unreachable_mux_error() {
+    init_logger();
+    let message = get_errors_for("
+        wire Foo: 32, bar: 32;
+        Foo = [ bar > 32: 1; 1 : 2; bar < 32: 3 ];
+        pc = 0;
+        bar = i10bytes[0..32];
+        Stat = STAT_AOK;
+    ");
+    debug!("message is {:?}", message);
+    assert!(message.contains("has at least one case that will never be reached"));
 }
